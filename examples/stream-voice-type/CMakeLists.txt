@@ -6,7 +6,7 @@ if (WHISPER_SDL2)
 
     target_link_libraries(${TARGET} PRIVATE common common-sdl whisper ${CMAKE_THREAD_LIBS_INIT})
 
-    if (UNIX AND NOT APPLE)
+    if (CMAKE_SYSTEM_NAME MATCHES "Linux")
         find_package(X11)
         if (X11_FOUND)
             target_include_directories(${TARGET} PRIVATE ${X11_INCLUDE_DIR})
