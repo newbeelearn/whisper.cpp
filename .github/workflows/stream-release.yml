@@ -1,4 +1,4 @@
-name: Stream Release
+name: Stream Binary Release
 
 on:
   workflow_dispatch:
@@ -22,7 +22,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            asset_os: linux
+          - os: macos-latest
+            asset_os: macos
 
     steps:
       - name: Checkout
@@ -49,18 +53,29 @@ jobs:
       - name: Build whisper-stream
         run: cmake --build build --config Release --target whisper-stream
 
-      - name: Package binary
+      - name: Collect compiled binary
         shell: bash
         run: |
-          mkdir -p dist
-          cp build/bin/whisper-stream dist/whisper-stream-${{ runner.os }}
-          tar -czf dist/whisper-stream-${{ runner.os }}.tar.gz -C dist whisper-stream-${{ runner.os }}
+          set -euo pipefail
+          BIN_PATH="build/bin/whisper-stream"
 
-      - name: Upload artifacts
+          if [ ! -f "$BIN_PATH" ]; then
+            echo "Expected binary not found at: $BIN_PATH"
+            exit 1
+          fi
+
+          ARCH="$(uname -m)"
+          OUT_NAME="whisper-stream-${{ matrix.asset_os }}-${ARCH}"
+
+          mkdir -p dist
+          cp "$BIN_PATH" "dist/$OUT_NAME"
+          chmod +x "dist/$OUT_NAME"
+
+      - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: whisper-stream-${{ runner.os }}
-          path: dist/whisper-stream-${{ runner.os }}.tar.gz
+          name: whisper-stream-${{ matrix.asset_os }}
+          path: dist/whisper-stream-${{ matrix.asset_os }}-*
 
   release:
     name: Create GitHub release
@@ -68,15 +83,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download build artifacts
+      - name: Download compiled binaries
         uses: actions/download-artifact@v4
         with:
           path: dist
 
-      - name: Create release
+      - name: Create release with binaries
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag }}
           prerelease: ${{ github.event.inputs.prerelease }}
-          files: dist/**/*.tar.gz
-          generate_release_notes: true
+          files: dist/**/whisper-stream-*
+          fail_on_unmatched_files: true
