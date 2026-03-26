@@ -1,8 +1,5 @@
 name: Examples WASM
 on:
-  push:
-    branches: ["master"]
-
   workflow_dispatch:
 
 permissions:

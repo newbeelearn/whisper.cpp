@@ -1,13 +1,6 @@
 name: Examples Tests
 on:
-  push:
-    paths:
-      - examples/addon.node/**
-      - whisper.h
-  pull_request:
-    paths:
-      - examples/addon.node/**
-      - whisper.h
+  workflow_dispatch:
 
 jobs:
   addon_node-ubuntu-22:
