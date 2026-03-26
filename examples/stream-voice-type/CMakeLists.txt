@@ -16,4 +16,4 @@ if (WHISPER_SDL2)
     endif (CMAKE_SYSTEM_NAME MATCHES "Linux")
 
     install(TARGETS ${TARGET} RUNTIME)
-endif (WHISPER_SDL2)
+endif()
