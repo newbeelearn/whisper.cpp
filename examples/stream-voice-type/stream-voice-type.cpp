@@ -156,7 +156,15 @@ public:
     }
 
     bool consume_toggle_request() {
+#if defined(WHISPER_STREAM_VT_X11_HOTKEY)
         return m_toggle_requested.exchange(false);
+#else
+        if (m_toggle_requested) {
+            m_toggle_requested = false;
+            return true;
+        }
+        return false;
+#endif
     }
 
 private:
@@ -206,11 +214,13 @@ private:
     }
 
     std::thread m_thread;
+    std::atomic<bool> m_running = false;
+    std::atomic<bool> m_toggle_requested = false;
+#else
+    bool m_toggle_requested = false;
 #endif
 
     bool m_enabled = false;
-    std::atomic<bool> m_running = false;
-    std::atomic<bool> m_toggle_requested = false;
 };
 
 int main(int argc, char ** argv) {
