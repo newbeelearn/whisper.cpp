@@ -76,6 +76,7 @@ jobs:
         with:
           name: whisper-stream-${{ matrix.asset_os }}
           path: dist/whisper-stream-${{ matrix.asset_os }}-*
+          if-no-files-found: error
 
   release:
     name: Create GitHub release
@@ -88,10 +89,18 @@ jobs:
         with:
           path: dist
 
+      - name: Stage release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          find dist -type f -name 'whisper-stream-*' -exec cp {} release-assets/ \;
+          ls -lh release-assets
+
       - name: Create release with binaries
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag }}
           prerelease: ${{ github.event.inputs.prerelease }}
-          files: dist/**/whisper-stream-*
+          files: release-assets/whisper-stream-*
           fail_on_unmatched_files: true
