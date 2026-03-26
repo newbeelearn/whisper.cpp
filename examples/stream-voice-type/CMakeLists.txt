@@ -15,6 +15,9 @@ if (WHISPER_SDL2)
 
         install(TARGETS ${TARGET} RUNTIME)
     else()
-        message(STATUS "Skipping whisper-stream-voice-type on ${CMAKE_SYSTEM_NAME}: this example currently targets Linux")
+        message(STATUS "whisper-stream-voice-type hotkey integration is Linux-only; generating a no-op target on ${CMAKE_SYSTEM_NAME}")
+        add_custom_target(whisper-stream-voice-type
+            COMMAND ${CMAKE_COMMAND} -E echo "whisper-stream-voice-type is unsupported on ${CMAKE_SYSTEM_NAME}; skipping build"
+            VERBATIM)
     endif()
 endif ()
