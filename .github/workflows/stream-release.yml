@@ -1,10 +1,10 @@
-name: Stream Binary Release
+name: Stream Voice Type Binary Release
 
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (for example: stream-v1.0.0)"
+        description: "Release tag (for example: stream-voice-type-v1.0.0)"
         required: true
       prerelease:
         description: "Mark release as prerelease"
@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   build:
-    name: Build whisper-stream (${{ matrix.os }})
+    name: Build whisper-stream-voice-type (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -51,14 +51,14 @@ jobs:
             -DWHISPER_BUILD_EXAMPLES=ON \
             -DWHISPER_SDL2=ON
 
-      - name: Build whisper-stream
-        run: cmake --build build --config Release --target whisper-stream
+      - name: Build whisper-stream-voice-type
+        run: cmake --build build --config Release --target whisper-stream-voice-type
 
       - name: Collect compiled binary
         shell: bash
         run: |
           set -euo pipefail
-          BIN_PATH="build/bin/whisper-stream"
+          BIN_PATH="build/bin/whisper-stream-voice-type"
 
           if [ ! -f "$BIN_PATH" ]; then
             echo "Expected binary not found at: $BIN_PATH"
@@ -66,7 +66,7 @@ jobs:
           fi
 
           ARCH="$(uname -m)"
-          OUT_NAME="whisper-stream-${{ matrix.asset_os }}-${ARCH}"
+          OUT_NAME="whisper-stream-voice-type-${{ matrix.asset_os }}-${ARCH}"
 
           mkdir -p dist
           cp "$BIN_PATH" "dist/$OUT_NAME"
@@ -75,8 +75,8 @@ jobs:
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: whisper-stream-${{ matrix.asset_os }}
-          path: dist/whisper-stream-${{ matrix.asset_os }}-*
+          name: whisper-stream-voice-type-${{ matrix.asset_os }}
+          path: dist/whisper-stream-voice-type-${{ matrix.asset_os }}-*
           if-no-files-found: error
 
   release:
@@ -95,7 +95,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          find dist -type f -name 'whisper-stream-*' -exec cp {} release-assets/ \;
+          find dist -type f -name 'whisper-stream-voice-type-*' -exec cp {} release-assets/ \;
           ls -lh release-assets
 
       - name: Create release with binaries
@@ -103,5 +103,5 @@ jobs:
         with:
           tag_name: ${{ github.event.inputs.tag }}
           prerelease: ${{ github.event.inputs.prerelease }}
-          files: release-assets/whisper-stream-*
+          files: release-assets/whisper-stream-voice-type-*
           fail_on_unmatched_files: true
