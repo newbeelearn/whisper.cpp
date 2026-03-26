@@ -1,0 +1,82 @@
+name: Stream Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (for example: stream-v1.0.0)"
+        required: true
+      prerelease:
+        description: "Mark release as prerelease"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build whisper-stream (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libsdl2-dev
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install sdl2
+
+      - name: Configure
+        run: |
+          cmake -S . -B build \
+            -DWHISPER_BUILD_EXAMPLES=ON \
+            -DWHISPER_SDL2=ON
+
+      - name: Build whisper-stream
+        run: cmake --build build --config Release --target whisper-stream
+
+      - name: Package binary
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp build/bin/whisper-stream dist/whisper-stream-${{ runner.os }}
+          tar -czf dist/whisper-stream-${{ runner.os }}.tar.gz -C dist whisper-stream-${{ runner.os }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-stream-${{ runner.os }}
+          path: dist/whisper-stream-${{ runner.os }}.tar.gz
+
+  release:
+    name: Create GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag }}
+          prerelease: ${{ github.event.inputs.prerelease }}
+          files: dist/**/*.tar.gz
+          generate_release_notes: true
