@@ -1,10 +1,11 @@
 if (WHISPER_SDL2)
-    set(TARGET whisper-stream-voice-type)
-    add_executable(${TARGET} stream-voice-type.cpp)
+    if (CMAKE_SYSTEM_NAME MATCHES "Linux")
+        set(TARGET whisper-stream-voice-type)
+        add_executable(${TARGET} stream-voice-type.cpp)
 
-    include(DefaultTargetOptions)
+        include(DefaultTargetOptions)
 
-    target_link_libraries(${TARGET} PRIVATE common common-sdl whisper ${CMAKE_THREAD_LIBS_INIT})
+        target_link_libraries(${TARGET} PRIVATE common common-sdl whisper ${CMAKE_THREAD_LIBS_INIT})
 
     if (CMAKE_SYSTEM_NAME MATCHES "Linux")
         find_package(X11)
