@@ -1,11 +1,7 @@
 name: Bindings Tests (Ruby)
 
 on:
-  push:
-    branches:
-      - master
-  pull_request:
-    types: [opened, synchronize, reopened]
+  workflow_dispatch:
 
 jobs:
   ubuntu-22:

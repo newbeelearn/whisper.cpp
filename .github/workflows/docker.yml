@@ -1,15 +1,12 @@
 name: Publish Docker image
 
 on:
-  pull_request:
-  push:
-    branches:
-      - master
+  workflow_dispatch:
 
 jobs:
   push_to_registry:
     name: Push Docker image to Docker Hub
-    if: github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
 
     runs-on: ubuntu-22.04
     env:

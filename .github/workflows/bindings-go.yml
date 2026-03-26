@@ -1,13 +1,6 @@
 name: Bindings Tests (Go)
 on:
-  push:
-    paths:
-      - bindings/go/**
-      - whisper.h
-  pull_request:
-    paths:
-      - bindings/go/**
-      - whisper.h
+  workflow_dispatch:
 
 jobs:
   ubuntu-22:
