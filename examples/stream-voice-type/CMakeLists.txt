@@ -14,7 +14,9 @@ target_link_libraries(${TARGET} PRIVATE common common-sdl whisper ${CMAKE_THREAD
 endif()
 
     install(TARGETS ${TARGET} RUNTIME)
-else()
+endif()
+
+if (NOT CMAKE_SYSTEM_NAME MATCHES "Linux")
     add_custom_target(whisper-stream-voice-type
         COMMAND ${CMAKE_COMMAND} -E echo "whisper-stream-voice-type is Linux-only; skipping on ${CMAKE_SYSTEM_NAME}"
         VERBATIM)
