@@ -228,25 +228,26 @@ static bool copy_text_to_clipboard(const std::string & text) {
         return true;
     }
 
-    bool video_init_here = false;
     if ((SDL_WasInit(SDL_INIT_VIDEO) & SDL_INIT_VIDEO) == 0) {
-        if (SDL_InitSubSystem(SDL_INIT_VIDEO) == 0) {
-            video_init_here = true;
-        } else {
-            return false;
-        }
+        fprintf(stderr, "%s: SDL video subsystem is not initialized\n", __func__);
+        return false;
     }
 
-    const bool ok = SDL_SetClipboardText(text.c_str()) == 0;
-
-    if (video_init_here) {
-        SDL_QuitSubSystem(SDL_INIT_VIDEO);
+    if (SDL_SetClipboardText(text.c_str()) != 0) {
+        return false;
     }
 
-    return ok;
+    SDL_PumpEvents();
+    return true;
 }
 
 int main(int argc, char ** argv) {
+#if defined(WHISPER_STREAM_VT_X11_HOTKEY)
+    if (!XInitThreads()) {
+        fprintf(stderr, "%s: warning: XInitThreads() failed, X11 hotkey/clipboard may be unstable\n", __func__);
+    }
+#endif
+
     ggml_backend_load_all();
 
     whisper_params params;
@@ -374,40 +375,70 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    if (params.hotkey_toggle && SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
+        fprintf(stderr, "%s: failed to initialize SDL video subsystem for clipboard: %s\n", __func__, SDL_GetError());
+    }
+
     auto t_last  = std::chrono::high_resolution_clock::now();
     const auto t_start = t_last;
 
+    auto reset_stream_state = [&]() {
+        pcmf32.clear();
+        pcmf32_old.clear();
+        pcmf32_new.clear();
+        prompt_tokens.clear();
+        n_iter = 0;
+        t_last = std::chrono::high_resolution_clock::now();
+    };
+
+    auto pause_stream = [&]() {
+        audio.clear();
+        audio.pause();
+        reset_stream_state();
+
+        if (has_active_hotkey_session && !hotkey_session_transcript.empty()) {
+            if (copy_text_to_clipboard(hotkey_session_transcript)) {
+                fprintf(stderr, "[session transcript copied to clipboard]\n");
+            } else {
+                fprintf(stderr, "[failed to copy session transcript to clipboard: %s]\n", SDL_GetError());
+            }
+        } else if (has_active_hotkey_session) {
+            fprintf(stderr, "[session transcript is empty, clipboard not updated]\n");
+        }
+
+        has_active_hotkey_session = false;
+        is_streaming = false;
+        fprintf(stderr, "\n[stream paused via Ctrl+Alt+S]\n");
+    };
+
+    auto resume_stream = [&]() {
+        reset_stream_state();
+        hotkey_session_transcript.clear();
+        has_active_hotkey_session = true;
+        is_streaming = true;
+        audio.resume();
+        audio.clear();
+        fprintf(stderr, "\n[stream resumed via Ctrl+Alt+S]\n");
+    };
+
+    auto handle_hotkey_toggle = [&]() {
+        if (!params.hotkey_toggle || !hotkey.consume_toggle_request()) {
+            return false;
+        }
+
+        if (is_streaming) {
+            pause_stream();
+        } else {
+            resume_stream();
+        }
+
+        return true;
+    };
+
     // main audio loop
     while (is_running) {
-        if (params.hotkey_toggle && hotkey.consume_toggle_request()) {
-            is_streaming = !is_streaming;
-            if (is_streaming) {
-                audio.resume();
-                audio.clear();
-                pcmf32_new.clear();
-                has_active_hotkey_session = true;
-                hotkey_session_transcript.clear();
-                fprintf(stderr, "\n[stream resumed via Ctrl+Alt+S]\n");
-            } else {
-                audio.pause();
-                if (has_active_hotkey_session && !hotkey_session_transcript.empty()) {
-                    if (copy_text_to_clipboard(hotkey_session_transcript)) {
-                        fprintf(stderr, "[session transcript copied to clipboard]\n");
-                    } else {
-                        fprintf(stderr, "[failed to copy session transcript to clipboard: %s]\n", SDL_GetError());
-                    }
-                } else if (has_active_hotkey_session) {
-                    fprintf(stderr, "[session transcript is empty, clipboard not updated]\n");
-                }
+        handle_hotkey_toggle();
 
-                has_active_hotkey_session = false;
-                fprintf(stderr, "\n[stream paused via Ctrl+Alt+S]\n");
-            }
-        }
-
-        if (params.save_audio && is_streaming) {
-            wavWriter.write(pcmf32_new.data(), pcmf32_new.size());
-        }
         // handle Ctrl + C
         is_running = sdl_poll_events();
 
@@ -429,8 +460,15 @@ int main(int argc, char ** argv) {
                 if (!is_running) {
                     break;
                 }
+
+                handle_hotkey_toggle();
+                if (!is_streaming) {
+                    break;
+                }
+
                 audio.get(params.step_ms, pcmf32_new);
 
+                handle_hotkey_toggle();
                 if (!is_streaming) {
                     break;
                 }
@@ -447,6 +485,18 @@ int main(int argc, char ** argv) {
                 }
 
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+
+            if (!is_running || !is_streaming) {
+                continue;
+            }
+
+            if ((int) pcmf32_new.size() < n_samples_step) {
+                continue;
+            }
+
+            if (params.save_audio) {
+                wavWriter.write(pcmf32_new.data(), pcmf32_new.size());
             }
 
             const int n_samples_new = pcmf32_new.size();
@@ -471,16 +521,25 @@ int main(int argc, char ** argv) {
 
             if (t_diff < 2000) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                handle_hotkey_toggle();
 
                 continue;
             }
 
             audio.get(2000, pcmf32_new);
+            handle_hotkey_toggle();
+            if (!is_streaming) {
+                continue;
+            }
 
             if (::vad_simple(pcmf32_new, WHISPER_SAMPLE_RATE, 1000, params.vad_thold, params.freq_thold, false)) {
                 audio.get(params.length_ms, pcmf32);
+                if (params.save_audio) {
+                    wavWriter.write(pcmf32.data(), pcmf32.size());
+                }
             } else {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                handle_hotkey_toggle();
 
                 continue;
             }
