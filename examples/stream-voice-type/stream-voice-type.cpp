@@ -250,17 +250,14 @@ static bool copy_text_to_clipboard(const std::string & text) {
         return true;
     }
 
+    // SDL_INIT_VIDEO must already be initialized at startup and kept alive
+    // so the app can respond to X11/Wayland SelectionRequest events.
     if ((SDL_WasInit(SDL_INIT_VIDEO) & SDL_INIT_VIDEO) == 0) {
-        fprintf(stderr, "%s: SDL video subsystem is not initialized\n", __func__);
+        fprintf(stderr, "%s: SDL video subsystem not initialized\n", __func__);
         return false;
     }
 
-    if (SDL_SetClipboardText(text.c_str()) != 0) {
-        return false;
-    }
-
-    SDL_PumpEvents();
-    return true;
+    return SDL_SetClipboardText(text.c_str()) == 0;
 }
 
 int main(int argc, char ** argv) {
@@ -288,7 +285,7 @@ int main(int argc, char ** argv) {
 
     const bool use_vad = n_samples_step <= 0; // sliding window mode uses VAD
 
-    const int n_new_line = !use_vad ? std::max(1, params.length_ms / params.step_ms - 1) : 1; // number of steps to print new line
+    const int n_new_line = !use_vad ? std::max(1, params.length_ms / params.step_ms - 1) : 1;
 
     params.no_timestamps  = !use_vad;
     params.no_context    |= use_vad;
@@ -303,6 +300,20 @@ int main(int argc, char ** argv) {
     }
 
     audio.resume();
+
+    // init SDL video subsystem once at startup for clipboard.
+    // On Linux the clipboard is selection-based: the owning app must stay
+    // alive and pump events to service paste requests from other apps.
+    // We init VIDEO here and never tear it down until exit.
+    bool sdl_video_initialized = false;
+    if (params.hotkey_toggle) {
+        if (SDL_InitSubSystem(SDL_INIT_VIDEO) == 0) {
+            sdl_video_initialized = true;
+        } else {
+            fprintf(stderr, "%s: SDL_InitSubSystem(VIDEO) failed: %s  (clipboard will not work)\n",
+                    __func__, SDL_GetError());
+        }
+    }
 
     global_hotkey_toggle hotkey(params.hotkey_toggle);
     bool is_streaming = true;
@@ -387,36 +398,11 @@ int main(int argc, char ** argv) {
 
         wavWriter.open(filename, WHISPER_SAMPLE_RATE, 16, 1);
     }
-    printf("[Start speaking]\n");
-    if (params.hotkey_toggle) {
-        printf("[Hotkey enabled: Ctrl+Alt+S toggles streaming]\n");
-    }
-    fflush(stdout);
 
-    if (!hotkey.start()) {
-        return 1;
-    }
-
-    if (params.hotkey_toggle && SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
-        fprintf(stderr, "%s: failed to initialize SDL video subsystem for clipboard: %s\n", __func__, SDL_GetError());
-    }
-
-    auto t_last  = std::chrono::high_resolution_clock::now();
-    const auto t_start = t_last;
-
-    auto reset_stream_state = [&]() {
-        pcmf32.clear();
-        pcmf32_old.clear();
-        pcmf32_new.clear();
-        prompt_tokens.clear();
-        n_iter = 0;
-        t_last = std::chrono::high_resolution_clock::now();
-    };
-
-    auto pause_stream = [&]() {
-        audio.clear();
+    // define pause/resume helpers after all state is declared.
+    auto do_pause = [&]() {
+        is_streaming = false;
         audio.pause();
-        reset_stream_state();
 
         if (has_active_hotkey_session && !hotkey_session_transcript.empty()) {
             if (copy_text_to_clipboard(hotkey_session_transcript)) {
@@ -429,37 +415,50 @@ int main(int argc, char ** argv) {
         }
 
         has_active_hotkey_session = false;
-        is_streaming = false;
         fprintf(stderr, "\n[stream paused via Ctrl+Alt+S]\n");
     };
 
-    auto resume_stream = [&]() {
-        reset_stream_state();
-        hotkey_session_transcript.clear();
-        has_active_hotkey_session = true;
+    auto do_resume = [&]() {
         is_streaming = true;
-        audio.resume();
+
+        // clear stale audio before resuming to prevent race.
         audio.clear();
+        audio.resume();
+
+        // reset all state that would poison the model.
+        pcmf32_new.clear();
+        pcmf32_old.clear();
+        prompt_tokens.clear();
+        n_iter = 0;
+
+        has_active_hotkey_session = true;
+        hotkey_session_transcript.clear();
         fprintf(stderr, "\n[stream resumed via Ctrl+Alt+S]\n");
     };
 
-    auto handle_hotkey_toggle = [&]() {
-        if (!params.hotkey_toggle || !hotkey.consume_toggle_request()) {
-            return false;
-        }
+    printf("[Start speaking]\n");
+    if (params.hotkey_toggle) {
+        printf("[Hotkey enabled: Ctrl+Alt+S toggles streaming]\n");
+    }
+    fflush(stdout);
 
-        if (is_streaming) {
-            pause_stream();
-        } else {
-            resume_stream();
-        }
+    if (!hotkey.start()) {
+        return 1;
+    }
 
-        return true;
-    };
+    auto t_last  = std::chrono::high_resolution_clock::now();
+    const auto t_start = t_last;
 
     // main audio loop
     while (is_running) {
-        handle_hotkey_toggle();
+        // handle hotkey at top of outer loop (primarily for resume)
+        if (params.hotkey_toggle && hotkey.consume_toggle_request()) {
+            if (is_streaming) {
+                do_pause();
+            } else {
+                do_resume();
+            }
+        }
 
         // handle Ctrl + C
         is_running = sdl_poll_events();
@@ -483,17 +482,13 @@ int main(int argc, char ** argv) {
                     break;
                 }
 
-                handle_hotkey_toggle();
-                if (!is_streaming) {
+                // check hotkey inside inner loop so pause is responsive.
+                if (params.hotkey_toggle && hotkey.consume_toggle_request()) {
+                    do_pause();
                     break;
                 }
 
                 audio.get(params.step_ms, pcmf32_new);
-
-                handle_hotkey_toggle();
-                if (!is_streaming) {
-                    break;
-                }
 
                 if ((int) pcmf32_new.size() > 2*n_samples_step) {
                     fprintf(stderr, "\n\n%s: WARNING: cannot process audio fast enough, dropping audio ...\n\n", __func__);
@@ -509,16 +504,9 @@ int main(int argc, char ** argv) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
 
-            if (!is_running || !is_streaming) {
+            // skip inference if we just paused or got Ctrl+C.
+            if (!is_streaming || !is_running) {
                 continue;
-            }
-
-            if ((int) pcmf32_new.size() < n_samples_step) {
-                continue;
-            }
-
-            if (params.save_audio) {
-                wavWriter.write(pcmf32_new.data(), pcmf32_new.size());
             }
 
             const int n_samples_new = pcmf32_new.size();
@@ -537,31 +525,29 @@ int main(int argc, char ** argv) {
             memcpy(pcmf32.data() + n_samples_take, pcmf32_new.data(), n_samples_new*sizeof(float));
 
             pcmf32_old = pcmf32;
+
+            if (params.save_audio && is_streaming) {
+                wavWriter.write(pcmf32_new.data(), pcmf32_new.size());
+            }
         } else {
             const auto t_now  = std::chrono::high_resolution_clock::now();
             const auto t_diff = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last).count();
 
             if (t_diff < 2000) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                handle_hotkey_toggle();
 
                 continue;
             }
 
             audio.get(2000, pcmf32_new);
-            handle_hotkey_toggle();
-            if (!is_streaming) {
-                continue;
-            }
 
             if (::vad_simple(pcmf32_new, WHISPER_SAMPLE_RATE, 1000, params.vad_thold, params.freq_thold, false)) {
                 audio.get(params.length_ms, pcmf32);
-                if (params.save_audio) {
+                if (params.save_audio && is_streaming) {
                     wavWriter.write(pcmf32.data(), pcmf32.size());
                 }
             } else {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                handle_hotkey_toggle();
 
                 continue;
             }
@@ -700,5 +686,11 @@ int main(int argc, char ** argv) {
     whisper_print_timings(ctx);
     whisper_free(ctx);
 
+    // tear down SDL video only at program exit.
+    if (sdl_video_initialized) {
+        SDL_QuitSubSystem(SDL_INIT_VIDEO);
+    }
+
     return 0;
 }
+
