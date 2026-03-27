@@ -178,28 +178,49 @@ private:
 
         Window root = DefaultRootWindow(display);
         const int keycode = XKeysymToKeycode(display, XK_S);
+        if (keycode == 0) {
+            fprintf(stderr, "%s: failed to resolve keycode for XK_S, global hotkey disabled\n", __func__);
+            XCloseDisplay(display);
+            return;
+        }
+
         const unsigned int base_mod = ControlMask | Mod1Mask;
         const unsigned int extra_mods[] = { 0, Mod2Mask, LockMask, Mod2Mask | LockMask };
 
         for (unsigned int extra_mod : extra_mods) {
-            XGrabKey(display, keycode, base_mod | extra_mod, root, True, GrabModeAsync, GrabModeAsync);
-            XGrabKey(display, keycode, (base_mod | extra_mod) | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
+            XGrabKey(display, keycode, base_mod | extra_mod, root, False, GrabModeAsync, GrabModeAsync);
+            XGrabKey(display, keycode, (base_mod | extra_mod) | ShiftMask, root, False, GrabModeAsync, GrabModeAsync);
         }
         XSync(display, False);
+
+        bool hotkey_down = false;
+        auto last_toggle = std::chrono::steady_clock::now() - std::chrono::milliseconds(1000);
+        const auto debounce = std::chrono::milliseconds(250);
 
         while (m_running) {
             while (XPending(display) > 0) {
                 XEvent event;
                 XNextEvent(display, &event);
 
-                if (event.type != KeyPress) {
-                    continue;
-                }
-
                 const XKeyEvent & key = event.xkey;
                 const unsigned int mod = key.state & (ShiftMask | ControlMask | Mod1Mask);
-                if (key.keycode == keycode && mod == (ControlMask | Mod1Mask)) {
-                    m_toggle_requested = true;
+                const bool is_hotkey = (key.keycode == keycode) && (mod == (ControlMask | Mod1Mask));
+
+                if (event.type == KeyPress) {
+                    if (!is_hotkey) {
+                        continue;
+                    }
+
+                    const auto now = std::chrono::steady_clock::now();
+                    if (!hotkey_down && (now - last_toggle) >= debounce) {
+                        m_toggle_requested.store(true, std::memory_order_release);
+                        last_toggle = now;
+                    }
+                    hotkey_down = true;
+                } else if (event.type == KeyRelease) {
+                    if (key.keycode == keycode) {
+                        hotkey_down = false;
+                    }
                 }
             }
 
@@ -210,6 +231,7 @@ private:
             XUngrabKey(display, keycode, base_mod | extra_mod, root);
             XUngrabKey(display, keycode, (base_mod | extra_mod) | ShiftMask, root);
         }
+        XSync(display, False);
         XCloseDisplay(display);
     }
 
