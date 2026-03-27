@@ -260,6 +260,8 @@ int main(int argc, char ** argv) {
 
     global_hotkey_toggle hotkey(params.hotkey_toggle);
     bool is_streaming = true;
+    bool has_active_hotkey_session = false;
+    std::string hotkey_session_transcript;
 
     // whisper init
     if (params.language != "auto" && whisper_lang_id(params.language.c_str()) == -1){
@@ -360,9 +362,19 @@ int main(int argc, char ** argv) {
                 audio.resume();
                 audio.clear();
                 pcmf32_new.clear();
+                has_active_hotkey_session = true;
+                hotkey_session_transcript.clear();
                 fprintf(stderr, "\n[stream resumed via Ctrl+Alt+S]\n");
             } else {
                 audio.pause();
+                if (has_active_hotkey_session) {
+                    if (SDL_SetClipboardText(hotkey_session_transcript.c_str()) == 0) {
+                        fprintf(stderr, "[session transcript copied to clipboard]\n");
+                    } else {
+                        fprintf(stderr, "[failed to copy session transcript to clipboard: %s]\n", SDL_GetError());
+                    }
+                    has_active_hotkey_session = false;
+                }
                 fprintf(stderr, "\n[stream paused via Ctrl+Alt+S]\n");
             }
         }
@@ -507,6 +519,10 @@ int main(int argc, char ** argv) {
                         printf("%s", text);
                         fflush(stdout);
 
+                        if (has_active_hotkey_session) {
+                            hotkey_session_transcript += text;
+                        }
+
                         if (params.fname_out.length() > 0) {
                             fout << text;
                         }
@@ -524,6 +540,10 @@ int main(int argc, char ** argv) {
 
                         printf("%s", output.c_str());
                         fflush(stdout);
+
+                        if (has_active_hotkey_session) {
+                            hotkey_session_transcript += output;
+                        }
 
                         if (params.fname_out.length() > 0) {
                             fout << output;
