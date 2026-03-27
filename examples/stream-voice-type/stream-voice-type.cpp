@@ -223,6 +223,29 @@ private:
     bool m_enabled = false;
 };
 
+static bool copy_text_to_clipboard(const std::string & text) {
+    if (text.empty()) {
+        return true;
+    }
+
+    bool video_init_here = false;
+    if ((SDL_WasInit(SDL_INIT_VIDEO) & SDL_INIT_VIDEO) == 0) {
+        if (SDL_InitSubSystem(SDL_INIT_VIDEO) == 0) {
+            video_init_here = true;
+        } else {
+            return false;
+        }
+    }
+
+    const bool ok = SDL_SetClipboardText(text.c_str()) == 0;
+
+    if (video_init_here) {
+        SDL_QuitSubSystem(SDL_INIT_VIDEO);
+    }
+
+    return ok;
+}
+
 int main(int argc, char ** argv) {
     ggml_backend_load_all();
 
@@ -260,7 +283,7 @@ int main(int argc, char ** argv) {
 
     global_hotkey_toggle hotkey(params.hotkey_toggle);
     bool is_streaming = true;
-    bool has_active_hotkey_session = false;
+    bool has_active_hotkey_session = params.hotkey_toggle;
     std::string hotkey_session_transcript;
 
     // whisper init
@@ -367,14 +390,17 @@ int main(int argc, char ** argv) {
                 fprintf(stderr, "\n[stream resumed via Ctrl+Alt+S]\n");
             } else {
                 audio.pause();
-                if (has_active_hotkey_session) {
-                    if (SDL_SetClipboardText(hotkey_session_transcript.c_str()) == 0) {
+                if (has_active_hotkey_session && !hotkey_session_transcript.empty()) {
+                    if (copy_text_to_clipboard(hotkey_session_transcript)) {
                         fprintf(stderr, "[session transcript copied to clipboard]\n");
                     } else {
                         fprintf(stderr, "[failed to copy session transcript to clipboard: %s]\n", SDL_GetError());
                     }
-                    has_active_hotkey_session = false;
+                } else if (has_active_hotkey_session) {
+                    fprintf(stderr, "[session transcript is empty, clipboard not updated]\n");
                 }
+
+                has_active_hotkey_session = false;
                 fprintf(stderr, "\n[stream paused via Ctrl+Alt+S]\n");
             }
         }
